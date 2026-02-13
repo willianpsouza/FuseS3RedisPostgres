@@ -9,7 +9,7 @@ Production-ready Go monorepo skeleton for a virtual filesystem on top of S3 with
 
 ## Architecture highlights
 - No S3 LIST calls in hot path.
-- O(1) resolution for `/files/<filename>` via `filename_hash` unique index in Postgres.
+- Fast resolution via composite path+filename hashes (`path_hash`,`filename_hash`) and date partitions in Postgres.
 - Two-level metadata cache in resolver: local LRU + Redis.
 - S3 read path via Range GET with block/prefetch settings and concurrency limits (global and per-bucket).
 - Structured logging (`zap`), health checks, Prometheus metrics endpoint.
@@ -43,14 +43,14 @@ ls /mnt/virtualfs/files
 ## API examples
 Multipart:
 ```bash
-curl -X POST "http://localhost:8080/v1/upload?date=2024-01-01&filename=file.txt" \
+curl -X POST "http://localhost:8080/v1/upload?date=2024-01-01&path=/20200101/2014/file.txt" \
   -H "X-API-Key: changeme" \
   -F "file=@./file.txt"
 ```
 
 Streaming:
 ```bash
-curl -X POST "http://localhost:8080/v1/upload?date=2024-01-01&filename=file.txt" \
+curl -X POST "http://localhost:8080/v1/upload?date=2024-01-01&path=/20200101/2014/file.txt" \
   -H "X-API-Key: changeme" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @./file.txt
@@ -58,7 +58,7 @@ curl -X POST "http://localhost:8080/v1/upload?date=2024-01-01&filename=file.txt"
 
 Resolve:
 ```bash
-curl "http://localhost:8080/v1/resolve?filename=file.txt" -H "X-API-Key: changeme"
+curl "http://localhost:8080/v1/resolve?path=/20200101/2014/file.txt" -H "X-API-Key: changeme"
 ```
 
 ## Tuning
@@ -78,3 +78,8 @@ make test
 ## Notes
 - `readdir` is intentionally limited/safe and does not enumerate huge datasets.
 - Prepared for Localstack-based integration tests (not mandatory by default).
+
+
+## Partitioning strategy
+- `objects` is partitioned by `date_partition` (RANGE), with default partition enabled.
+- Uniqueness is enforced by `(date_partition, path_hash, filename_hash)`, allowing repeated filenames under different paths safely.

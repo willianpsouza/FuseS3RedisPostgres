@@ -41,7 +41,7 @@ func (d *Dir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 func (d *Dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if d.name == "files" {
-		obj, err := d.root.resolver.Resolve(ctx, name)
+		obj, err := d.root.resolver.Resolve(ctx, metadata.JoinVirtualPath("/files", name))
 		if err != nil {
 			return nil, syscall.ENOENT
 		}

@@ -51,8 +51,12 @@ func (s *Server) Router() *gin.Engine {
 }
 
 func (s *Server) resolve(c *gin.Context) {
-	filename := c.Query("filename")
-	obj, err := s.resolver.Resolve(c.Request.Context(), filename)
+	virtualPath := c.Query("path")
+	if virtualPath == "" {
+		filename := c.Query("filename")
+		virtualPath = metadata.JoinVirtualPath("/files", filename)
+	}
+	obj, err := s.resolver.Resolve(c.Request.Context(), virtualPath)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
@@ -62,11 +66,16 @@ func (s *Server) resolve(c *gin.Context) {
 
 func (s *Server) upload(c *gin.Context) {
 	dateRaw, filename := c.Query("date"), c.Query("filename")
-	if !dateRE.MatchString(dateRaw) || filename == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date or filename"})
+	virtualPath := c.Query("path")
+	if !dateRE.MatchString(dateRaw) || (filename == "" && virtualPath == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date and path/filename"})
 		return
 	}
 	dateVal, _ := time.Parse("2006-01-02", dateRaw)
+	if virtualPath == "" {
+		virtualPath = metadata.JoinVirtualPath("/files", filename)
+	}
+	filename = path.Base(virtualPath)
 	bucket, key := decideBucketKey(dateVal, filename)
 	file, closeFn, err := extractReader(c, filename)
 	if err != nil {
@@ -84,13 +93,13 @@ func (s *Server) upload(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "s3 upload failed"})
 		return
 	}
-	obj := metadata.Object{Filename: filename, Bucket: bucket, Key: key, Size: cr.n, ETag: ptrStr(upOut.ETag), LastModified: time.Now().UTC(), ChecksumMD5: ptr(hex.EncodeToString(md5h.Sum(nil))), ChecksumSHA: ptr(hex.EncodeToString(sha.Sum(nil)))}
+	obj := metadata.Object{VirtualPath: virtualPath, Filename: filename, Bucket: bucket, Key: key, Size: cr.n, ETag: ptrStr(upOut.ETag), LastModified: time.Now().UTC(), ChecksumMD5: ptr(hex.EncodeToString(md5h.Sum(nil))), ChecksumSHA: ptr(hex.EncodeToString(sha.Sum(nil)))}
 	if err := s.repo.UpsertObject(c.Request.Context(), obj, dateVal, "active"); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "metadata upsert failed"})
 		return
 	}
-	s.redis.Publish(c.Request.Context(), "object_ingested", fmt.Sprintf("%s|%s|%s", filename, bucket, key))
-	c.JSON(http.StatusOK, gin.H{"bucket": bucket, "key": key, "size": obj.Size, "etag": obj.ETag, "checksums": gin.H{"md5": obj.ChecksumMD5, "sha256": obj.ChecksumSHA}})
+	s.redis.Publish(c.Request.Context(), "object_ingested", fmt.Sprintf("%s|%s|%s", virtualPath, bucket, key))
+	c.JSON(http.StatusOK, gin.H{"path": virtualPath, "bucket": bucket, "key": key, "size": obj.Size, "etag": obj.ETag, "checksums": gin.H{"md5": obj.ChecksumMD5, "sha256": obj.ChecksumSHA}})
 }
 
 func extractReader(c *gin.Context, fallbackName string) (io.Reader, func(), error) {
