@@ -1,0 +1,13 @@
+[Unit]
+Description=VirtualFS scanner agent
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/virtualfs/scanner.env
+ExecStart=/usr/local/bin/scanner-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
